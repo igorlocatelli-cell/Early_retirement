@@ -52,7 +52,7 @@ st.sidebar.title("🔥 Parametri FIRE")
 st.sidebar.caption("Simulazione Monte Carlo multivariata per l'Early Retirement in Italia")
 
 with st.sidebar.expander("👤 Anagrafica & Orizzonte Temporale", expanded=True):
-    current_age = st.number_input("Età attuale", 18, 70, 40, step=1)
+    current_age = st.number_input("Età attuale", 18, 70, 46, step=1)
     fire_age = st.number_input("Età FIRE (uscita dal lavoro)", int(current_age) + 1, 80, 53, step=1)
     inps_age = st.number_input("Età pensione INPS", int(fire_age), 75, 67, step=1)
     life_exp = st.number_input("Aspettativa di vita", int(inps_age) + 1, 110, 90, step=1)
