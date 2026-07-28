@@ -72,6 +72,34 @@ with st.sidebar.expander("📉 Spese & Entrate Future", expanded=True):
     st.caption(f"Pensione INPS annua stimata: **{inps_pension_annual:,.0f} €** dai {int(inps_age)} anni "
                f"(valore reale, si assume indicizzata all'inflazione)")
 
+with st.sidebar.expander("🏠 Rendite Immobiliari", expanded=False):
+    rental_annual = st.number_input("Rendita annua da immobile (€, valore reale)", 0, step=500, value=0)
+    rental_start_age = st.number_input("Età inizio rendita immobiliare", int(current_age), int(life_exp),
+                                        int(fire_age), step=1)
+    rental_end_age = st.number_input("Età fine rendita immobiliare", int(rental_start_age), int(life_exp),
+                                      int(life_exp), step=1)
+    rental_tax = st.number_input("Aliquota cedolare secca %", 0.0, 50.0, 21.0, step=0.5) / 100
+
+    st.divider()
+    sale_amount = st.number_input("Vendita immobile una tantum (€, valore reale)", 0, step=5000, value=0)
+    sale_age = st.number_input("Età della vendita", int(current_age), int(life_exp), int(fire_age), step=1)
+    sale_tax = st.number_input("Aliquota tassazione plusvalenza vendita %", 0.0, 50.0, 0.0, step=0.5,
+                                help="0% se prima casa o immobile posseduto da oltre 5 anni (tipicamente esente)") / 100
+
+with st.sidebar.expander("🦢 Eventi Cigno Nero", expanded=False):
+    n_black_swans = st.number_input("Numero atteso di cigni neri nell'orizzonte", 0, 10, 0, step=1,
+                                     help="Eventi di crollo di mercato improvvisi e imprevedibili, distribuiti "
+                                          "casualmente lungo l'intero orizzonte temporale di ogni simulazione")
+    bs_impact_mean = st.number_input("Impatto medio sul rendimento annuo (%)", -80.0, 0.0, -35.0, step=1.0) / 100
+    bs_impact_vol = st.number_input("Volatilità dell'impatto (%)", 0.0, 40.0, 10.0, step=1.0) / 100
+
+with st.sidebar.expander("💼 Reddito da Lavoro Extra (part-time / P.IVA forfettaria)", expanded=False):
+    work_income = st.number_input("Reddito annuo netto extra (€, valore reale)", 0, step=500, value=0)
+    work_start_age = st.number_input("Età inizio reddito extra", int(current_age), int(life_exp),
+                                      int(fire_age), step=1)
+    work_end_age = st.number_input("Età fine reddito extra", int(work_start_age), int(life_exp),
+                                    int(inps_age), step=1)
+
 with st.sidebar.expander("📊 Asset Allocation & Mercati", expanded=True):
     st.caption("**Asset Allocation di portafoglio (%)**")
     w_equity_in = st.slider("Azionario %", 0, 100, 70)
@@ -120,7 +148,11 @@ def run_simulation(current_age, fire_age, inps_age, life_exp,
                     target_expense, inps_pension_annual,
                     w_equity, w_bond, w_gov,
                     eq_ret, eq_vol, bond_ret, bond_vol, gov_ret, gov_vol,
-                    infl_mean, infl_vol, n_sims, rule, gain_ratio, seed):
+                    infl_mean, infl_vol, n_sims, rule, gain_ratio, seed,
+                    rental_annual, rental_start_age, rental_end_age, rental_tax,
+                    sale_amount, sale_age, sale_tax,
+                    n_black_swans, bs_impact_mean, bs_impact_vol,
+                    work_income, work_start_age, work_end_age):
 
     rng = np.random.default_rng(int(seed))
 
@@ -142,6 +174,14 @@ def run_simulation(current_age, fire_age, inps_age, life_exp,
     port_return = we * eq_r + wb * bond_r + wg * gov_r
     fp_return = 0.5 * port_return + 0.5 * (we * eq_r + wb * bond_r + wg * gov_r) * 0.7  # crescita FP moderata
 
+    # ---- CIGNI NERI: shock di crollo aggiuntivi distribuiti casualmente nell'orizzonte ----
+    bs_hit = np.zeros((n_sims, n_years_total), dtype=bool)
+    if n_black_swans > 0 and n_years_total > 0:
+        p_bs = min(n_black_swans / n_years_total, 1.0)
+        bs_hit = rng.random((n_sims, n_years_total)) < p_bs
+        bs_shock = rng.normal(bs_impact_mean, bs_impact_vol, size=(n_sims, n_years_total))
+        port_return = np.where(bs_hit, port_return + bs_shock, port_return)
+
     blended_gain_tax = (we + wb) * 0.26 + wg * 0.125  # tassazione plusvalenze pesata
 
     cum_infl = np.cumprod(1 + infl_r, axis=1)
@@ -153,6 +193,8 @@ def run_simulation(current_age, fire_age, inps_age, life_exp,
     withdrawals_nominal = np.zeros((n_sims, n_years_total))
     expenses_nominal = np.zeros((n_sims, n_years_total))
     pension_nominal_track = np.zeros((n_sims, n_years_total))
+    rental_nominal_track = np.zeros((n_sims, n_years_total))
+    work_nominal_track = np.zeros((n_sims, n_years_total))
 
     initial_wd_rate = None
     guardrail_mult = np.ones(n_sims)
@@ -162,12 +204,23 @@ def run_simulation(current_age, fire_age, inps_age, life_exp,
     for t in range(n_years_total):
         age = current_age + t
         w = wealth[:, t].copy()
+        cum_i = cum_infl[:, t - 1] if t > 0 else np.ones(n_sims)
+
+        # ---- Entrate extra valide in ogni fase: rendita immobiliare e lavoro extra ----
+        rental_nom = np.where((age >= rental_start_age) & (age <= rental_end_age),
+                               rental_annual * (1 - rental_tax) * cum_i, 0.0)
+        work_nom = np.where((age >= work_start_age) & (age <= work_end_age),
+                             work_income * cum_i, 0.0)
+
+        # ---- Vendita immobile una tantum (si attiva una sola volta, all'età indicata) ----
+        if age == sale_age:
+            w = w + sale_amount * cum_i * (1 - sale_tax)
 
         if t < n_acc_years:
             # ---- FASE DI ACCUMULO ----
             w = w * (1 + port_return[:, t])
             w = w * (1 - BOLLO)
-            w = w + annual_saving
+            w = w + annual_saving + rental_nom + work_nom
             fp_wealth = fp_wealth * (1 + fp_return[:, t]) + fp_contrib
         else:
             # ---- CONVERSIONE FONDO PENSIONE (una tantum, all'uscita FIRE) ----
@@ -178,11 +231,11 @@ def run_simulation(current_age, fire_age, inps_age, life_exp,
                 fp_wealth = np.zeros(n_sims)
 
             # ---- FASE DI DECUMULO ----
-            cum_i = cum_infl[:, t - 1] if t > 0 else np.ones(n_sims)
             target_nom = target_expense * cum_i
             pension_nom = np.where(age >= inps_age, inps_pension_annual * cum_i, 0.0)
+            total_income = pension_nom + rental_nom + work_nom
 
-            need = np.maximum(target_nom - pension_nom, 0.0)
+            need = np.maximum(target_nom - total_income, 0.0)
 
             if rule.startswith("Guardrails"):
                 cur_rate = need / np.maximum(w, 1.0)
@@ -206,6 +259,8 @@ def run_simulation(current_age, fire_age, inps_age, life_exp,
             withdrawals_nominal[:, t] = withdrawal
             expenses_nominal[:, t] = target_nom
             pension_nominal_track[:, t] = pension_nom
+            rental_nominal_track[:, t] = rental_nom
+            work_nominal_track[:, t] = work_nom
 
         wealth[:, t + 1] = w
 
@@ -225,8 +280,11 @@ def run_simulation(current_age, fire_age, inps_age, life_exp,
         "withdrawals": withdrawals_nominal,
         "expenses": expenses_nominal,
         "pension": pension_nominal_track,
+        "rental": rental_nominal_track,
+        "work": work_nominal_track,
         "cum_infl": cum_infl,
         "max_dd_per_sim": max_dd_per_sim,
+        "bs_hit_count": bs_hit.sum(axis=1),
         "corr": CORR,
     }
 
@@ -238,6 +296,10 @@ results = run_simulation(
     w_equity, w_bond, w_gov,
     eq_ret, eq_vol, bond_ret, bond_vol, gov_ret, gov_vol,
     infl_mean, infl_vol, int(n_sims), rule, gain_ratio, int(seed),
+    rental_annual, int(rental_start_age), int(rental_end_age), rental_tax,
+    sale_amount, int(sale_age), sale_tax,
+    int(n_black_swans), bs_impact_mean, bs_impact_vol,
+    work_income, int(work_start_age), int(work_end_age),
 )
 
 wealth = results["wealth"]
@@ -267,6 +329,11 @@ k1.metric("✅ Success Rate", f"{success_rate:.1f}%")
 k2.metric(f"💼 Patrimonio Mediano a {int(inps_age)} anni", f"{median_wealth_inps:,.0f} €")
 k3.metric(f"🏁 Patrimonio Mediano a {int(life_exp)} anni", f"{median_wealth_final:,.0f} €")
 k4.metric("📉 Max Drawdown Mediano", f"{median_max_dd:.1f}%")
+
+if n_black_swans > 0:
+    avg_bs = float(np.mean(results["bs_hit_count"]))
+    st.caption(f"🦢 In media ogni simulazione ha sperimentato **{avg_bs:.1f}** eventi di cigno nero "
+               f"(atteso impostato: {int(n_black_swans)}).")
 
 if success_rate < 80:
     st.warning(f"⚠️ Il tasso di successo ({success_rate:.1f}%) è sotto la soglia prudenziale dell'80%. "
@@ -325,10 +392,14 @@ with tab1:
         real_expense = np.median(results["expenses"][:, dec_slice] / cum_i_dec, axis=0)
         real_withdrawal = np.median(results["withdrawals"][:, dec_slice] / cum_i_dec, axis=0)
         real_pension = np.median(results["pension"][:, dec_slice] / cum_i_dec, axis=0)
+        real_rental = np.median(results["rental"][:, dec_slice] / cum_i_dec, axis=0)
+        real_work = np.median(results["work"][:, dec_slice] / cum_i_dec, axis=0)
 
         fig3 = go.Figure()
         fig3.add_trace(go.Bar(x=ages_dec, y=real_withdrawal, name="Prelievo da portafoglio", marker_color="#636EFA"))
         fig3.add_trace(go.Bar(x=ages_dec, y=real_pension, name="Pensione INPS", marker_color="#00CC96"))
+        fig3.add_trace(go.Bar(x=ages_dec, y=real_rental, name="Rendita immobiliare", marker_color="#FFA15A"))
+        fig3.add_trace(go.Bar(x=ages_dec, y=real_work, name="Reddito lavoro extra", marker_color="#AB63FA"))
         fig3.add_trace(go.Scatter(x=ages_dec, y=real_expense, name="Spesa target", line=dict(color="black", dash="dot")))
         fig3.update_layout(barmode="stack", xaxis_title="Età", yaxis_title="€/anno (valore reale)",
                             height=400, margin=dict(l=10, r=10, t=30, b=10),
@@ -385,4 +456,8 @@ with tab2:
     - Fondo Pensione: liquidato in un'unica soluzione all'uscita FIRE, tassato con aliquota decrescente dal 15% (fino a 15 anni di versamento) al 9% (oltre 35 anni), poi confluito nel portafoglio liquido.
     - Pensione INPS attivata all'età impostata, assunta indicizzata all'inflazione in termini reali.
     - Regola "Guardrails": taglio del 10% della spesa se il tasso di prelievo corrente supera del 20% quello iniziale; incremento del 10% se scende sotto il 20%.
+    - Rendita immobiliare: importo reale annuo tra le età impostate, tassato con cedolare secca configurabile; riduce il prelievo necessario dal portafoglio negli anni di decumulo, si aggiunge al risparmio negli anni di accumulo.
+    - Vendita immobile una tantum: importo reale accreditato al patrimonio liquido nell'anno dell'età impostata, al netto dell'aliquota di plusvalenza configurata.
+    - Cigni neri: in ciascuna simulazione, ogni anno ha una probabilità pari a (numero atteso / durata orizzonte) di subire uno shock di rendimento aggiuntivo, con impatto medio e volatilità configurabili — un modo semplificato per stressare il portafoglio con crolli imprevedibili distribuiti nel tempo.
+    - Reddito da lavoro extra (part-time/P.IVA forfettaria): importo netto reale tra le età impostate, riduce il prelievo necessario durante il bridge pre-INPS, si aggiunge al risparmio se percepito prima del FIRE.
     """)
