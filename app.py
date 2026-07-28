@@ -36,13 +36,16 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# Matrice di correlazione fissa tra i 4 fattori stocastici:
-# [Azionario, Obbligazionario, Titoli Stato WL, Inflazione]
+# Matrice di correlazione fissa tra i 5 fattori stocastici della Bucket Strategy:
+# [Risk7 Moneyfarm, Immobiliare, Conto Deposito, Altro, Inflazione]
+# Nota: il Fondo Pensione Moneyfarm (stesso profilo Rischio 7) condivide lo stesso
+# fattore "Risk7 Moneyfarm" (correlazione 1:1), quindi non compare come fattore separato.
 CORR = np.array([
-    [1.00, -0.10, -0.05,  0.10],
-    [-0.10, 1.00,  0.85, -0.30],
-    [-0.05, 0.85,  1.00, -0.25],
-    [0.10, -0.30, -0.25,  1.00],
+    [1.00, 0.20, -0.05, 0.10, 0.10],
+    [0.20, 1.00, 0.00, 0.10, 0.30],
+    [-0.05, 0.00, 1.00, 0.10, 0.15],
+    [0.10, 0.10, 0.10, 1.00, 0.00],
+    [0.10, 0.30, 0.15, 0.00, 1.00],
 ])
 
 # =====================================================================
@@ -52,17 +55,16 @@ st.sidebar.title("🔥 Parametri FIRE")
 st.sidebar.caption("Simulazione Monte Carlo multivariata per l'Early Retirement in Italia")
 
 with st.sidebar.expander("👤 Anagrafica & Orizzonte Temporale", expanded=True):
-    current_age = st.number_input("Età attuale", 18, 70, 46, step=1)
+    current_age = st.number_input("Età attuale", 18, 70, 40, step=1)
     fire_age = st.number_input("Età FIRE (uscita dal lavoro)", int(current_age) + 1, 80, 53, step=1)
     inps_age = st.number_input("Età pensione INPS", int(fire_age), 75, 67, step=1)
     life_exp = st.number_input("Aspettativa di vita", int(inps_age) + 1, 110, 90, step=1)
 
-with st.sidebar.expander("💰 Patrimonio & Contributi", expanded=True):
-    liquid_assets = st.number_input("Patrimonio liquido attuale (€)", 0, step=5000, value=300000)
+with st.sidebar.expander("💰 Contributi", expanded=True):
     annual_saving = st.number_input("Risparmio annuo pre-FIRE (€)", 0, step=500, value=18000)
-    fp_current = st.number_input("Fondo Pensione accumulato (€)", 0, step=1000, value=50000)
     fp_contrib = st.number_input("Versamento annuo Fondo Pensione (€)", 0, 5165, 5164, step=1,
-                                  help="Limite di deducibilità fiscale: 5.164,57 €/anno")
+                                  help="Limite di deducibilità fiscale: 5.164,57 €/anno. Va ad alimentare "
+                                       "il bucket 'Fondo Pensione Moneyfarm' definito più sotto.")
 
 with st.sidebar.expander("📉 Spese & Entrate Future", expanded=True):
     target_expense = st.number_input("Spesa annua target post-FIRE (€, valore reale/odierno)",
@@ -100,32 +102,66 @@ with st.sidebar.expander("💼 Reddito da Lavoro Extra (part-time / P.IVA forfet
     work_end_age = st.number_input("Età fine reddito extra", int(work_start_age), int(life_exp),
                                     int(inps_age), step=1)
 
-with st.sidebar.expander("📊 Asset Allocation & Mercati", expanded=True):
-    st.caption("**Asset Allocation di portafoglio (%)**")
-    w_equity_in = st.slider("Azionario %", 0, 100, 70)
-    w_bond_in = st.slider("Obbligazionario %", 0, 100, 20)
-    w_gov_in = max(0, 100 - w_equity_in - w_bond_in)
-    _tot = max(w_equity_in + w_bond_in + w_gov_in, 1)
-    w_equity, w_bond, w_gov = w_equity_in / _tot, w_bond_in / _tot, w_gov_in / _tot
-    st.caption(f"Titoli di Stato White List: **{w_gov*100:.1f}%** (pesi normalizzati a 100%)")
+with st.sidebar.expander("🪣 Bucket Strategy — Patrimonio & Fondo Pensione", expanded=True):
+    st.caption("**1️⃣ Portafoglio Moneyfarm (Rischio 7)**")
+    mf_amount = st.number_input("Importo investito (€)", 0, step=5000, value=250000, key="mf_amt")
+    cc1, cc2 = st.columns(2)
+    with cc1:
+        mf_ret = st.number_input("Rendimento atteso %", value=6.5, step=0.1, key="mf_ret") / 100
+    with cc2:
+        mf_vol = st.number_input("Volatilità %", value=16.0, step=0.1, key="mf_vol") / 100
 
-    st.caption("**Rendimenti attesi e volatilità (nominali, annui)**")
-    c1, c2 = st.columns(2)
-    with c1:
-        eq_ret = st.number_input("Rend. Azionario %", value=7.0, step=0.1) / 100
-        bond_ret = st.number_input("Rend. Obbligazionario %", value=3.0, step=0.1) / 100
-        gov_ret = st.number_input("Rend. Gov. WL %", value=3.5, step=0.1) / 100
-    with c2:
-        eq_vol = st.number_input("Vol. Azionario %", value=15.0, step=0.1) / 100
-        bond_vol = st.number_input("Vol. Obbligazionario %", value=6.0, step=0.1) / 100
-        gov_vol = st.number_input("Vol. Gov. WL %", value=5.0, step=0.1) / 100
+    st.divider()
+    st.caption("**2️⃣ Fondo Pensione Moneyfarm (Rischio 7)**")
+    fp_mf_amount = st.number_input("Importo accumulato (€)", 0, step=1000, value=50000, key="fp_amt")
+    cc3, cc4 = st.columns(2)
+    with cc3:
+        fp_mf_ret = st.number_input("Rendimento atteso %", value=6.0, step=0.1, key="fp_ret") / 100
+    with cc4:
+        fp_mf_vol = st.number_input("Volatilità %", value=15.0, step=0.1, key="fp_vol") / 100
+    st.caption("Stesso profilo di rischio del portafoglio Moneyfarm → simulato con correlazione 1:1")
+
+    st.divider()
+    st.caption("**3️⃣ Investimento Immobiliare (es. Trusters)**")
+    re_amount = st.number_input("Importo investito (€)", 0, step=5000, value=0, key="re_amt")
+    cc5, cc6 = st.columns(2)
+    with cc5:
+        re_ret = st.number_input("Rendimento atteso %", value=5.0, step=0.1, key="re_ret") / 100
+    with cc6:
+        re_vol = st.number_input("Volatilità %", value=8.0, step=0.1, key="re_vol") / 100
+
+    st.divider()
+    st.caption("**4️⃣ Conto Deposito**")
+    dep_amount = st.number_input("Importo depositato (€)", 0, step=1000, value=0, key="dep_amt")
+    cc7, cc8 = st.columns(2)
+    with cc7:
+        dep_ret = st.number_input("Rendimento %", value=3.0, step=0.1, key="dep_ret") / 100
+    with cc8:
+        dep_vol = st.number_input("Volatilità %", value=0.5, step=0.1, key="dep_vol") / 100
+
+    st.divider()
+    st.caption("**5️⃣ Altro**")
+    alt_amount = st.number_input("Importo (€)", 0, step=1000, value=0, key="alt_amt")
+    cc9, cc10 = st.columns(2)
+    with cc9:
+        alt_ret = st.number_input("Rendimento %", value=2.0, step=0.1, key="alt_ret") / 100
+    with cc10:
+        alt_vol = st.number_input("Volatilità %", value=5.0, step=0.1, key="alt_vol") / 100
+
+    st.divider()
+    capital_gain_tax = st.number_input("Aliquota fiscale su plusvalenze/rendimenti %", 0.0, 50.0, 26.0, step=0.5,
+                                        help="Applicata sulla quota di prelievo stimata come plusvalenza") / 100
 
     st.caption("**Inflazione**")
-    c3, c4 = st.columns(2)
-    with c3:
+    ic1, ic2 = st.columns(2)
+    with ic1:
         infl_mean = st.number_input("Inflazione media %", value=2.0, step=0.1) / 100
-    with c4:
+    with ic2:
         infl_vol = st.number_input("Volatilità inflazione %", value=1.2, step=0.1) / 100
+
+    total_liquid = mf_amount + re_amount + dep_amount + alt_amount
+    st.info(f"💼 Patrimonio liquido totale (esclusa Fondo Pensione): **{total_liquid:,.0f} €**\n\n"
+            f"📐 Ordine di prelievo in decumulo: Conto Deposito → Altro → Portafoglio Moneyfarm → Immobiliare")
 
 with st.sidebar.expander("⚙️ Parametri Simulazione", expanded=True):
     n_sims = st.slider("Numero simulazioni Monte Carlo", 1000, 10000, 5000, step=500)
@@ -144,10 +180,13 @@ st.sidebar.caption("⚠️ Strumento didattico. Non costituisce consulenza finan
 # =====================================================================
 @st.cache_data(show_spinner="⏳ Esecuzione simulazioni Monte Carlo in corso...")
 def run_simulation(current_age, fire_age, inps_age, life_exp,
-                    liquid_assets, annual_saving, fp_current, fp_contrib,
+                    mf_amount, mf_ret, mf_vol,
+                    fp_mf_amount, fp_mf_ret, fp_mf_vol, fp_contrib,
+                    re_amount, re_ret, re_vol,
+                    dep_amount, dep_ret, dep_vol,
+                    alt_amount, alt_ret, alt_vol,
+                    capital_gain_tax, annual_saving,
                     target_expense, inps_pension_annual,
-                    w_equity, w_bond, w_gov,
-                    eq_ret, eq_vol, bond_ret, bond_vol, gov_ret, gov_vol,
                     infl_mean, infl_vol, n_sims, rule, gain_ratio, seed,
                     rental_annual, rental_start_age, rental_end_age, rental_tax,
                     sale_amount, sale_age, sale_tax,
@@ -159,36 +198,40 @@ def run_simulation(current_age, fire_age, inps_age, life_exp,
     n_years_total = int(life_exp - current_age)
     n_acc_years = int(fire_age - current_age)
 
-    we, wb, wg = w_equity, w_bond, w_gov
+    # ---- Fattori stocastici correlati (standardizzati, media 0 / varianza 1) ----
+    # ordine: Risk7 Moneyfarm, Immobiliare, Conto Deposito, Altro, Inflazione
+    draws = rng.multivariate_normal(np.zeros(5), CORR, size=(n_sims, n_years_total))
+    risk7_z, re_z, dep_z, alt_z, infl_z = (draws[:, :, i] for i in range(5))
 
-    mean_vec = [eq_ret, bond_ret, gov_ret, infl_mean]
-    vol_vec = np.array([eq_vol, bond_vol, gov_vol, infl_vol])
-    cov = CORR * np.outer(vol_vec, vol_vec)
-
-    draws = rng.multivariate_normal(mean_vec, cov, size=(n_sims, n_years_total))
-    eq_r = draws[:, :, 0]
-    bond_r = draws[:, :, 1]
-    gov_r = draws[:, :, 2]
-    infl_r = np.clip(draws[:, :, 3], -0.5, None)
-
-    port_return = we * eq_r + wb * bond_r + wg * gov_r
-    fp_return = 0.5 * port_return + 0.5 * (we * eq_r + wb * bond_r + wg * gov_r) * 0.7  # crescita FP moderata
+    mf_return = mf_ret + mf_vol * risk7_z
+    fp_return = fp_mf_ret + fp_mf_vol * risk7_z  # stesso profilo di rischio del Portafoglio Moneyfarm
+    re_return = re_ret + re_vol * re_z
+    dep_return = dep_ret + dep_vol * dep_z
+    alt_return = alt_ret + alt_vol * alt_z
+    infl_r = np.clip(infl_mean + infl_vol * infl_z, -0.5, None)
 
     # ---- CIGNI NERI: shock di crollo aggiuntivi distribuiti casualmente nell'orizzonte ----
+    # Colpiscono i bucket collegati ai mercati finanziari (Moneyfarm, FP, Immobiliare in misura ridotta)
     bs_hit = np.zeros((n_sims, n_years_total), dtype=bool)
     if n_black_swans > 0 and n_years_total > 0:
         p_bs = min(n_black_swans / n_years_total, 1.0)
         bs_hit = rng.random((n_sims, n_years_total)) < p_bs
         bs_shock = rng.normal(bs_impact_mean, bs_impact_vol, size=(n_sims, n_years_total))
-        port_return = np.where(bs_hit, port_return + bs_shock, port_return)
-
-    blended_gain_tax = (we + wb) * 0.26 + wg * 0.125  # tassazione plusvalenze pesata
+        mf_return = np.where(bs_hit, mf_return + bs_shock, mf_return)
+        fp_return = np.where(bs_hit, fp_return + bs_shock, fp_return)
+        re_return = np.where(bs_hit, re_return + bs_shock * 0.6, re_return)
 
     cum_infl = np.cumprod(1 + infl_r, axis=1)
 
+    # ---- Stato dei bucket ----
+    mf_w = np.full(n_sims, float(mf_amount))
+    fp_w = np.full(n_sims, float(fp_mf_amount))
+    re_w = np.full(n_sims, float(re_amount))
+    dep_w = np.full(n_sims, float(dep_amount))
+    alt_w = np.full(n_sims, float(alt_amount))
+
     wealth = np.zeros((n_sims, n_years_total + 1))
-    wealth[:, 0] = liquid_assets
-    fp_wealth = np.full(n_sims, float(fp_current))
+    wealth[:, 0] = mf_amount + re_amount + dep_amount + alt_amount
 
     withdrawals_nominal = np.zeros((n_sims, n_years_total))
     expenses_nominal = np.zeros((n_sims, n_years_total))
@@ -199,11 +242,10 @@ def run_simulation(current_age, fire_age, inps_age, life_exp,
     initial_wd_rate = None
     guardrail_mult = np.ones(n_sims)
 
-    BOLLO = 0.002  # 0,20% imposta di bollo annua
+    BOLLO = 0.002  # 0,20% imposta di bollo annua (non applicata al Conto Deposito, per semplicità)
 
     for t in range(n_years_total):
         age = current_age + t
-        w = wealth[:, t].copy()
         cum_i = cum_infl[:, t - 1] if t > 0 else np.ones(n_sims)
 
         # ---- Entrate extra valide in ogni fase: rendita immobiliare e lavoro extra ----
@@ -214,23 +256,25 @@ def run_simulation(current_age, fire_age, inps_age, life_exp,
 
         # ---- Vendita immobile una tantum (si attiva una sola volta, all'età indicata) ----
         if age == sale_age:
-            w = w + sale_amount * cum_i * (1 - sale_tax)
+            mf_w = mf_w + sale_amount * cum_i * (1 - sale_tax)
 
         if t < n_acc_years:
-            # ---- FASE DI ACCUMULO ----
-            w = w * (1 + port_return[:, t])
-            w = w * (1 - BOLLO)
-            w = w + annual_saving + rental_nom + work_nom
-            fp_wealth = fp_wealth * (1 + fp_return[:, t]) + fp_contrib
+            # ---- FASE DI ACCUMULO: ogni bucket cresce col proprio rendimento ----
+            mf_w = mf_w * (1 + mf_return[:, t]) * (1 - BOLLO) + annual_saving + rental_nom + work_nom
+            fp_w = fp_w * (1 + fp_return[:, t]) + fp_contrib
+            re_w = re_w * (1 + re_return[:, t]) * (1 - BOLLO)
+            dep_w = dep_w * (1 + dep_return[:, t])
+            alt_w = alt_w * (1 + alt_return[:, t]) * (1 - BOLLO)
         else:
-            # ---- CONVERSIONE FONDO PENSIONE (una tantum, all'uscita FIRE) ----
+            # ---- CONVERSIONE FONDO PENSIONE (una tantum, all'uscita FIRE) → confluisce nel bucket Moneyfarm ----
             if t == n_acc_years:
                 years_contrib = max(n_acc_years, 1)
                 fp_tax_rate = max(0.09, 0.15 - 0.003 * max(0, years_contrib - 15))
-                w = w + fp_wealth * (1 - fp_tax_rate)
-                fp_wealth = np.zeros(n_sims)
+                mf_w = mf_w + fp_w * (1 - fp_tax_rate)
+                fp_w = np.zeros(n_sims)
 
             # ---- FASE DI DECUMULO ----
+            total_w_before = mf_w + re_w + dep_w + alt_w
             target_nom = target_expense * cum_i
             pension_nom = np.where(age >= inps_age, inps_pension_annual * cum_i, 0.0)
             total_income = pension_nom + rental_nom + work_nom
@@ -238,7 +282,7 @@ def run_simulation(current_age, fire_age, inps_age, life_exp,
             need = np.maximum(target_nom - total_income, 0.0)
 
             if rule.startswith("Guardrails"):
-                cur_rate = need / np.maximum(w, 1.0)
+                cur_rate = need / np.maximum(total_w_before, 1.0)
                 if initial_wd_rate is None:
                     initial_wd_rate = cur_rate.copy()
                 upper = initial_wd_rate * 1.20
@@ -248,21 +292,44 @@ def run_simulation(current_age, fire_age, inps_age, life_exp,
                 guardrail_mult = np.clip(guardrail_mult, 0.5, 1.5)
                 need = need * guardrail_mult
 
-            gross_need = need / (1 - gain_ratio * blended_gain_tax)
-            withdrawal = np.minimum(gross_need, np.maximum(w, 0.0))
+            gross_need = need / (1 - gain_ratio * capital_gain_tax)
 
-            w = np.maximum(w - withdrawal, 0.0)
-            w = w * (1 + port_return[:, t])
-            w = w * (1 - BOLLO)
-            w = np.maximum(w, 0.0)
+            # ---- WATERFALL DI PRELIEVO: Deposito → Altro → Moneyfarm → Immobiliare ----
+            take_dep = np.minimum(gross_need, np.maximum(dep_w, 0.0))
+            dep_w = dep_w - take_dep
+            remaining = gross_need - take_dep
 
-            withdrawals_nominal[:, t] = withdrawal
+            take_alt = np.minimum(remaining, np.maximum(alt_w, 0.0))
+            alt_w = alt_w - take_alt
+            remaining = remaining - take_alt
+
+            take_mf = np.minimum(remaining, np.maximum(mf_w, 0.0))
+            mf_w = mf_w - take_mf
+            remaining = remaining - take_mf
+
+            take_re = np.minimum(remaining, np.maximum(re_w, 0.0))
+            re_w = re_w - take_re
+            remaining = remaining - take_re
+
+            withdrawal_actual = gross_need - remaining
+
+            # ---- crescita del residuo di ciascun bucket ----
+            mf_w = np.maximum(mf_w, 0.0) * (1 + mf_return[:, t]) * (1 - BOLLO)
+            re_w = np.maximum(re_w, 0.0) * (1 + re_return[:, t]) * (1 - BOLLO)
+            dep_w = np.maximum(dep_w, 0.0) * (1 + dep_return[:, t])
+            alt_w = np.maximum(alt_w, 0.0) * (1 + alt_return[:, t]) * (1 - BOLLO)
+
+            withdrawals_nominal[:, t] = withdrawal_actual
             expenses_nominal[:, t] = target_nom
             pension_nominal_track[:, t] = pension_nom
             rental_nominal_track[:, t] = rental_nom
             work_nominal_track[:, t] = work_nom
 
-        wealth[:, t + 1] = w
+        mf_w = np.maximum(mf_w, 0.0)
+        re_w = np.maximum(re_w, 0.0)
+        dep_w = np.maximum(dep_w, 0.0)
+        alt_w = np.maximum(alt_w, 0.0)
+        wealth[:, t + 1] = mf_w + re_w + dep_w + alt_w
 
     ages = np.arange(current_age, life_exp + 1)
 
@@ -291,10 +358,13 @@ def run_simulation(current_age, fire_age, inps_age, life_exp,
 
 results = run_simulation(
     current_age, fire_age, inps_age, life_exp,
-    liquid_assets, annual_saving, fp_current, fp_contrib,
+    mf_amount, mf_ret, mf_vol,
+    fp_mf_amount, fp_mf_ret, fp_mf_vol, fp_contrib,
+    re_amount, re_ret, re_vol,
+    dep_amount, dep_ret, dep_vol,
+    alt_amount, alt_ret, alt_vol,
+    capital_gain_tax, annual_saving,
     target_expense, inps_pension_annual,
-    w_equity, w_bond, w_gov,
-    eq_ret, eq_vol, bond_ret, bond_vol, gov_ret, gov_vol,
     infl_mean, infl_vol, int(n_sims), rule, gain_ratio, int(seed),
     rental_annual, int(rental_start_age), int(rental_end_age), rental_tax,
     sale_amount, int(sale_age), sale_tax,
@@ -416,10 +486,9 @@ with tab1:
 with tab2:
     st.subheader("🔗 Matrice di Correlazione (fattori stocastici)")
     corr_df = pd.DataFrame(results["corr"],
-                            index=["Azionario", "Obbligazionario", "Gov. White List", "Inflazione"],
-                            columns=["Azionario", "Obbligazionario", "Gov. White List", "Inflazione"])
-    st.dataframe(corr_df.style.format("{:.2f}").background_gradient(cmap="RdBu_r", vmin=-1, vmax=1),
-                 use_container_width=True)
+                            index=["Risk7 Moneyfarm", "Immobiliare", "Conto Deposito", "Altro", "Inflazione"],
+                            columns=["Risk7 Moneyfarm", "Immobiliare", "Conto Deposito", "Altro", "Inflazione"])
+    st.dataframe(corr_df.style.format("{:.2f}"), use_container_width=True)
 
     st.subheader("📋 Percorso Mediano Anno per Anno")
     median_path = np.median(wealth, axis=0)
@@ -450,14 +519,15 @@ with tab2:
     st.divider()
     st.markdown("""
     **Assunzioni metodologiche principali:**
-    - Rendimenti e inflazione generati da distribuzione normale multivariata correlata (Cholesky), campionati per ogni anno e ogni simulazione.
-    - Imposta di bollo dello 0,20% applicata annualmente sul controvalore di portafoglio.
-    - Tassazione plusvalenze: 26% su azionario/obbligazionario societario, 12,5% su Titoli di Stato White List, pesata sull'asset allocation e applicata sulla quota di prelievo stimata come plusvalenza.
-    - Fondo Pensione: liquidato in un'unica soluzione all'uscita FIRE, tassato con aliquota decrescente dal 15% (fino a 15 anni di versamento) al 9% (oltre 35 anni), poi confluito nel portafoglio liquido.
+    - Ogni bucket (Portafoglio Moneyfarm, Fondo Pensione Moneyfarm, Immobiliare, Conto Deposito, Altro) cresce con un proprio rendimento stocastico, generato da fattori normali correlati (Portafoglio e Fondo Pensione Moneyfarm condividono lo stesso fattore "Rischio 7", correlazione 1:1).
+    - Imposta di bollo dello 0,20% applicata annualmente sul controvalore dei bucket Moneyfarm, Immobiliare e Altro (esclusa, per semplificazione, dal Conto Deposito).
+    - Tassazione plusvalenze: aliquota unica configurabile (default 26%) applicata sulla quota di prelievo stimata come plusvalenza.
+    - Fondo Pensione: liquidato in un'unica soluzione all'uscita FIRE, tassato con aliquota decrescente dal 15% (fino a 15 anni di versamento) al 9% (oltre 35 anni), il netto confluisce nel bucket Portafoglio Moneyfarm.
+    - Ordine di prelievo in decumulo (bucket strategy a cascata): Conto Deposito → Altro → Portafoglio Moneyfarm → Immobiliare (il meno liquido, prelevato per ultimo).
     - Pensione INPS attivata all'età impostata, assunta indicizzata all'inflazione in termini reali.
     - Regola "Guardrails": taglio del 10% della spesa se il tasso di prelievo corrente supera del 20% quello iniziale; incremento del 10% se scende sotto il 20%.
     - Rendita immobiliare: importo reale annuo tra le età impostate, tassato con cedolare secca configurabile; riduce il prelievo necessario dal portafoglio negli anni di decumulo, si aggiunge al risparmio negli anni di accumulo.
-    - Vendita immobile una tantum: importo reale accreditato al patrimonio liquido nell'anno dell'età impostata, al netto dell'aliquota di plusvalenza configurata.
-    - Cigni neri: in ciascuna simulazione, ogni anno ha una probabilità pari a (numero atteso / durata orizzonte) di subire uno shock di rendimento aggiuntivo, con impatto medio e volatilità configurabili — un modo semplificato per stressare il portafoglio con crolli imprevedibili distribuiti nel tempo.
+    - Vendita immobile una tantum: importo reale accreditato al bucket Portafoglio Moneyfarm nell'anno dell'età impostata, al netto dell'aliquota di plusvalenza configurata.
+    - Cigni neri: in ciascuna simulazione, ogni anno ha una probabilità pari a (numero atteso / durata orizzonte) di subire uno shock di rendimento aggiuntivo sui bucket collegati ai mercati finanziari (Moneyfarm, Fondo Pensione, Immobiliare in misura ridotta), con impatto medio e volatilità configurabili.
     - Reddito da lavoro extra (part-time/P.IVA forfettaria): importo netto reale tra le età impostate, riduce il prelievo necessario durante il bridge pre-INPS, si aggiunge al risparmio se percepito prima del FIRE.
     """)
