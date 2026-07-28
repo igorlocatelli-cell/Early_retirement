@@ -77,9 +77,12 @@ with st.sidebar.expander("📉 Spese & Entrate Future", expanded=True):
 with st.sidebar.expander("🏠 Rendite Immobiliari", expanded=False):
     rental_annual = st.number_input("Rendita annua da immobile (€, valore reale)", 0, step=500, value=0)
     rental_start_age = st.number_input("Età inizio rendita immobiliare", int(current_age), int(life_exp),
-                                        int(fire_age), step=1)
-    rental_end_age = st.number_input("Età fine rendita immobiliare", int(rental_start_age), int(life_exp),
-                                      int(life_exp), step=1)
+                                        int(fire_age), step=1, key="rental_start_age")
+    rental_end_age_raw = st.number_input("Età fine rendita immobiliare", int(current_age), int(life_exp),
+                                          int(life_exp), step=1, key="rental_end_age")
+    rental_end_age = max(rental_end_age_raw, rental_start_age)
+    if rental_end_age_raw < rental_start_age:
+        st.warning(f"⚠️ L'età fine è precedente all'età inizio: verrà usata {rental_end_age}.")
     rental_tax = st.number_input("Aliquota cedolare secca %", 0.0, 50.0, 21.0, step=0.5) / 100
 
     st.divider()
@@ -98,9 +101,12 @@ with st.sidebar.expander("🦢 Eventi Cigno Nero", expanded=False):
 with st.sidebar.expander("💼 Reddito da Lavoro Extra (part-time / P.IVA forfettaria)", expanded=False):
     work_income = st.number_input("Reddito annuo netto extra (€, valore reale)", 0, step=500, value=0)
     work_start_age = st.number_input("Età inizio reddito extra", int(current_age), int(life_exp),
-                                      int(fire_age), step=1)
-    work_end_age = st.number_input("Età fine reddito extra", int(work_start_age), int(life_exp),
-                                    int(inps_age), step=1)
+                                      int(fire_age), step=1, key="work_start_age")
+    work_end_age_raw = st.number_input("Età fine reddito extra", int(current_age), int(life_exp),
+                                        int(inps_age), step=1, key="work_end_age")
+    work_end_age = max(work_end_age_raw, work_start_age)
+    if work_end_age_raw < work_start_age:
+        st.warning(f"⚠️ L'età fine è precedente all'età inizio: verrà usata {work_end_age}.")
 
 with st.sidebar.expander("🪣 Bucket Strategy — Patrimonio & Fondo Pensione", expanded=True):
     st.caption("**1️⃣ Portafoglio Moneyfarm (Rischio 7)**")
